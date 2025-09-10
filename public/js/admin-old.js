@@ -106,8 +106,14 @@ function showAlert(message, type = 'info') {
     alertDiv.className = `alert alert-${type}`;
     alertDiv.innerHTML = `
         <span>${message}</span>
-        <button class="close-btn" onclick="this.parentElement.remove()">&times;</button>
+        <button class="close-btn">&times;</button>
     `;
+    
+    // Add event listener for close button (CSP compliant)
+    const closeBtn = alertDiv.querySelector('.close-btn');
+    closeBtn.addEventListener('click', function() {
+        this.parentElement.remove();
+    });
     
     alertContainer.appendChild(alertDiv);
     
@@ -493,7 +499,7 @@ async function openDocumentModal(documentId) {
                 </div>
                 ${document.extractedText ? `
                     <div class="mb-20">
-                        <h5>Extracted Text (OCR)</h5>
+                        <h5>Document Text</h5>
                         <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; max-height: 200px; overflow-y: auto;">
                             ${document.extractedText}
                         </div>

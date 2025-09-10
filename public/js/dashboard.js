@@ -7,30 +7,72 @@ let currentUser;
 
 // Utility functions
 function showAlert(message, type = 'info') {
-    const alertContainer = document.getElementById('alert-container');
-    if (!alertContainer) return;
-
-    const alertDiv = document.createElement('div');
-    alertDiv.className = `alert alert-${type}`;
-    alertDiv.innerHTML = `
+    const alertContainer = document.getElementById('alert-container') || document.body;
+    const alert = document.createElement('div');
+    alert.className = `alert alert-${type}`;
+    alert.innerHTML = `
         <span>${message}</span>
-        <button class="close-btn" data-dismiss="alert">&times;</button>
+        <button class="alert-close">&times;</button>
     `;
     
-    // Add event listener for close button
-    const closeBtn = alertDiv.querySelector('[data-dismiss="alert"]');
+    // Add event listener for close button (CSP compliant)
+    const closeBtn = alert.querySelector('.alert-close');
     closeBtn.addEventListener('click', function() {
         this.parentElement.remove();
     });
-    
-    alertContainer.appendChild(alertDiv);
+    alertContainer.appendChild(alert);
     
     // Auto remove after 5 seconds
     setTimeout(() => {
-        if (alertDiv.parentElement) {
-            alertDiv.remove();
+        if (alert.parentElement) {
+            alert.remove();
         }
     }, 5000);
+}
+
+// Phone number formatting function to ensure E.164 format
+function formatPhoneNumber(phone) {
+    if (!phone) return null;
+    
+    // Remove all non-digit characters
+    const digits = phone.replace(/\D/g, '');
+    
+    // If already starts with +, return as is (assuming it's already formatted)
+    if (phone.startsWith('+')) {
+        return phone;
+    }
+    
+    // Handle Indian numbers
+    if (digits.length === 10) {
+        // 10 digits - add +91 country code for India
+        return `+91${digits}`;
+    } else if (digits.length === 12 && digits.startsWith('91')) {
+        // 12 digits starting with 91 - add + prefix
+        return `+${digits}`;
+    } else if (digits.length === 11 && digits.startsWith('1')) {
+        // 11 digits starting with 1 - likely US number
+        return `+${digits}`;
+    }
+    
+    // For numbers longer than 10 digits, don't truncate - return with + prefix
+    if (digits.length > 10) {
+        console.warn(`Phone number has ${digits.length} digits, may be malformed: ${phone}`);
+        return `+${digits}`;
+    }
+    
+    // Return null if can't format properly
+    console.warn(`Unable to format phone number: ${phone}`);
+    return null;
+}
+
+// Validate phone number format
+function validatePhoneNumber(phone) {
+    const formatted = formatPhoneNumber(phone);
+    if (!formatted) return false;
+    
+    // Check if it's a valid E.164 format
+    const e164Regex = /^\+[1-9]\d{1,14}$/;
+    return e164Regex.test(formatted);
 }
 
 // API helper function with rate limit handling
@@ -152,7 +194,7 @@ function initializeDashboard() {
 // Prevent repeated profile loading with persistent storage
 let profileLoadInProgress = false;
 let lastProfileLoadTime = parseInt(localStorage.getItem('lastProfileLoad') || '0');
-const PROFILE_LOAD_COOLDOWN = 10000; // 10 seconds
+const PROFILE_LOAD_COOLDOWN = 3000; // 3 seconds
 
 // Load user profile and check verification status
 async function loadUserProfile() {
@@ -236,7 +278,7 @@ function displayUserInfo(user) {
         <div>
             <strong>${user.name}</strong>
             <div style="font-size: 0.9rem; color: #666;">
-                ${user.email} | ${user.phone}
+                ${user.email} | ${formatPhoneNumber(user.phone)}
             </div>
         </div>
     `;
@@ -527,7 +569,259 @@ function callNumber(number) {
     }
 }
 
-// Remove duplicate variable declarations (fixing lint errors ID: 7f41fa28-87c2-45ef-a601-33f30bbc9d1c, 6b650623-ede3-4d31-89f0-2a4b248ea4be)
+// Contact management functions
+async function handleAddContact(e) {
+    e.preventDefault();
+    
+    const form = e.target;
+    const data = {
+        name: form.contactName.value,
+        phone: formatPhoneNumber(form.contactPhone.value),
+        relationship: form.contactRelationship.value,
+        priority: parseInt(form.contactPriority.value)
+    };
+
+    if (!data.name || !data.phone || !data.relationship || !data.priority) {
+        showAlert('All fields are required', 'danger');
+        return;
+    }
+
+    if (!validatePhoneNumber(data.phone)) {
+        showAlert('Invalid phone number format', 'danger');
+        return;
+    }
+
+    try {
+        const response = await apiCall('/api/emergency/contacts', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+
+        if (response.success) {
+            showAlert('Emergency contact added successfully!', 'success');
+            closeContactModal();
+            loadEmergencyContacts(); // Reload contacts list
+        } else {
+            throw new Error(response.message || 'Failed to add contact');
+        }
+    } catch (error) {
+        console.error('Add contact error:', error);
+        showAlert(error.message || 'Failed to add emergency contact', 'danger');
+    }
+}
+
+// Prevent repeated contacts loading with persistent storage
+let contactsLoadInProgress = false;
+let lastContactsLoadTime = parseInt(localStorage.getItem('lastContactsLoad') || '0');
+const CONTACTS_LOAD_COOLDOWN = 8000; // 8 seconds
+
+// Emergency contacts management
+async function loadEmergencyContacts() {
+    // Prevent repeated calls within cooldown period
+    const now = Date.now();
+    if (contactsLoadInProgress || (now - lastContactsLoadTime < CONTACTS_LOAD_COOLDOWN)) {
+        console.log('Contacts load skipped - cooldown active or already in progress');
+        return;
+    }
+    
+    contactsLoadInProgress = true;
+    lastContactsLoadTime = now;
+    localStorage.setItem('lastContactsLoad', now.toString());
+    
+    try {
+        const response = await apiCall('/api/emergency/contacts');
+        if (response.success) {
+            displayContacts(response.contacts);
+        } else {
+            throw new Error(response.message || 'Failed to load contacts');
+        }
+    } catch (error) {
+        console.error('Failed to load contacts:', error);
+        
+        // Handle rate limiting specifically
+        if (error.status === 429) {
+            const retryAfter = error.retryAfter || 60;
+            showAlert(`Rate limited. Please wait ${retryAfter} seconds before loading contacts.`, 'warning');
+            
+            const contactsList = document.getElementById('contacts-list');
+            if (contactsList) {
+                contactsList.innerHTML = `
+                    <div class="text-center" style="color: #f39c12; padding: 20px;">
+                        <i class="fas fa-clock"></i>
+                        <p>Rate limited - please wait ${retryAfter}s</p>
+                        <button class="btn btn-sm btn-secondary" id="retry-contacts-rate-limit">
+                            <i class="fas fa-refresh"></i> Retry
+                        </button>
+                    </div>`;
+                
+                // Add event listener for retry button
+                const retryBtn = document.getElementById('retry-contacts-rate-limit');
+                if (retryBtn) retryBtn.addEventListener('click', loadEmergencyContacts);
+            }
+        } else {
+            showAlert('Failed to load emergency contacts', 'warning');
+            
+            // Show placeholder UI
+            const contactsList = document.getElementById('contacts-list');
+            if (contactsList) {
+                contactsList.innerHTML = `
+                    <div class="text-center" style="color: #666; padding: 20px;">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <p>Unable to load emergency contacts</p>
+                        <button class="btn btn-sm btn-secondary" id="retry-contacts-error">
+                            <i class="fas fa-refresh"></i> Retry
+                        </button>
+                    </div>
+                `;
+                
+                // Add event listener for retry button
+                const retryBtn = document.getElementById('retry-contacts-error');
+                if (retryBtn) retryBtn.addEventListener('click', loadEmergencyContacts);
+            }
+        }
+    } finally {
+        contactsLoadInProgress = false;
+    }
+}
+
+function displayContacts(contacts) {
+    const contactsList = document.getElementById('contacts-list');
+    
+    if (contacts.length === 0) {
+        contactsList.innerHTML = '<p class="text-center">No emergency contacts added yet.</p>';
+        return;
+    }
+
+    contactsList.innerHTML = contacts.map(contact => `
+        <div class="contact-item">
+            <div class="contact-info">
+                <h4>${contact.name}</h4>
+                <p>${formatPhoneNumber(contact.phone)} | ${contact.relationship} | Priority: ${contact.priority}</p>
+            </div>
+            <div class="contact-actions">
+                <button class="btn btn-sm btn-primary" data-phone="${contact.phone}">
+                    <i class="fas fa-phone"></i>
+                </button>
+                <button class="btn btn-sm btn-danger" data-contact-id="${contact._id}">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Modal utility functions
+function showModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+    }
+}
+
+function hideModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    }
+}
+
+function showAddContactModal() {
+    showModal('contactModal');
+}
+
+function hideAddContactModal() {
+    hideModal('contactModal');
+}
+
+function closeContactModal() {
+    hideModal('contactModal');
+    document.getElementById('contactForm').reset();
+}
+
+async function deleteContact(contactId) {
+    if (!confirm('Are you sure you want to delete this contact?')) {
+        return;
+    }
+
+    try {
+        const response = await apiCall(`/api/emergency/contacts/${contactId}`, {
+            method: 'DELETE'
+        });
+
+        if (response.success) {
+            showAlert('Contact deleted successfully', 'success');
+            loadEmergencyContacts();
+        }
+    } catch (error) {
+        showAlert(error.message || 'Failed to delete contact', 'danger');
+    }
+}
+
+// Initialize when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    if (window.location.pathname === '/dashboard') {
+        initializeDashboard();
+        
+        // Add event listeners for buttons
+        const logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) logoutBtn.addEventListener('click', logout);
+        
+        const sendOtpBtn = document.getElementById('send-otp-btn');
+        if (sendOtpBtn) sendOtpBtn.addEventListener('click', sendOTP);
+        
+        const verifyOtpBtn = document.getElementById('verify-otp-btn');
+        if (verifyOtpBtn) verifyOtpBtn.addEventListener('click', verifyOTP);
+        
+        const addContactBtn = document.getElementById('add-contact-btn');
+        if (addContactBtn) addContactBtn.addEventListener('click', showAddContactModal);
+        
+        const closeContactModal = document.getElementById('close-contact-modal');
+        if (closeContactModal) closeContactModal.addEventListener('click', hideAddContactModal);
+        
+        // Add event listeners for dynamically generated contact buttons
+        document.addEventListener('click', function(e) {
+            if (e.target.closest('[data-phone]')) {
+                const phone = e.target.closest('[data-phone]').getAttribute('data-phone');
+                callNumber(phone);
+            }
+            if (e.target.closest('[data-contact-id]')) {
+                const contactId = e.target.closest('[data-contact-id]').getAttribute('data-contact-id');
+                deleteContact(contactId);
+            }
+        });
+        
+        // Add event listeners for emergency numbers
+        const emergencyCards = document.querySelectorAll('.feature-card[data-number]');
+        emergencyCards.forEach(card => {
+            card.addEventListener('click', function() {
+                const number = this.getAttribute('data-number');
+                callNumber(number);
+            });
+        });
+        
+        // Add SOS button event listeners (CSP compliant)
+        const sosButton = document.getElementById('sosButton');
+        if (sosButton) {
+            console.log('SOS button found, attaching event listeners');
+            // Mouse events
+            sosButton.addEventListener('mousedown', startSOS);
+            sosButton.addEventListener('mouseup', cancelSOS);
+            sosButton.addEventListener('mouseleave', cancelSOS);
+            
+            // Touch events for mobile
+            sosButton.addEventListener('touchstart', startSOS);
+            sosButton.addEventListener('touchend', cancelSOS);
+            sosButton.addEventListener('touchcancel', cancelSOS);
+        } else {
+            console.error('SOS button not found in DOM');
+        }
+    }
+});
 
 // Tourist spots data (Delhi landmarks)
 const touristSpots = [
@@ -818,240 +1112,3 @@ function addSafetyMarkers() {
         }).addTo(map).bindPopup(`🔵 ${service.name}`);
     });
 }
-
-// Prevent repeated contacts loading with persistent storage
-let contactsLoadInProgress = false;
-let lastContactsLoadTime = parseInt(localStorage.getItem('lastContactsLoad') || '0');
-const CONTACTS_LOAD_COOLDOWN = 8000; // 8 seconds
-
-// Emergency contacts management
-async function loadEmergencyContacts() {
-    // Prevent repeated calls within cooldown period
-    const now = Date.now();
-    if (contactsLoadInProgress || (now - lastContactsLoadTime < CONTACTS_LOAD_COOLDOWN)) {
-        console.log('Contacts load skipped - cooldown active or already in progress');
-        return;
-    }
-    
-    contactsLoadInProgress = true;
-    lastContactsLoadTime = now;
-    localStorage.setItem('lastContactsLoad', now.toString());
-    
-    try {
-        const response = await apiCall('/api/emergency/contacts');
-        if (response.success) {
-            displayContacts(response.contacts);
-        } else {
-            throw new Error(response.message || 'Failed to load contacts');
-        }
-    } catch (error) {
-        console.error('Failed to load contacts:', error);
-        
-        // Handle rate limiting specifically
-        if (error.status === 429) {
-            const retryAfter = error.retryAfter || 60;
-            showAlert(`Rate limited. Please wait ${retryAfter} seconds before loading contacts.`, 'warning');
-            
-            const contactsList = document.getElementById('contacts-list');
-            if (contactsList) {
-                contactsList.innerHTML = `
-                    <div class="text-center" style="color: #f39c12; padding: 20px;">
-                        <i class="fas fa-clock"></i>
-                        <p>Rate limited - please wait ${retryAfter}s</p>
-                        <button class="btn btn-sm btn-secondary" id="retry-contacts-rate-limit">
-                            <i class="fas fa-refresh"></i> Retry
-                        </button>
-                    </div>`;
-                
-                // Add event listener for retry button
-                const retryBtn = document.getElementById('retry-contacts-rate-limit');
-                if (retryBtn) retryBtn.addEventListener('click', loadEmergencyContacts);
-            }
-        } else {
-            showAlert('Failed to load emergency contacts', 'warning');
-            
-            // Show placeholder UI
-            const contactsList = document.getElementById('contacts-list');
-            if (contactsList) {
-                contactsList.innerHTML = `
-                    <div class="text-center" style="color: #666; padding: 20px;">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <p>Unable to load emergency contacts</p>
-                        <button class="btn btn-sm btn-secondary" id="retry-contacts-error">
-                            <i class="fas fa-refresh"></i> Retry
-                        </button>
-                    </div>
-                `;
-                
-                // Add event listener for retry button
-                const retryBtn = document.getElementById('retry-contacts-error');
-                if (retryBtn) retryBtn.addEventListener('click', loadEmergencyContacts);
-            }
-        }
-    } finally {
-        contactsLoadInProgress = false;
-    }
-}
-
-function displayContacts(contacts) {
-    const contactsList = document.getElementById('contacts-list');
-    
-    if (contacts.length === 0) {
-        contactsList.innerHTML = '<p class="text-center">No emergency contacts added yet.</p>';
-        return;
-    }
-
-    contactsList.innerHTML = contacts.map(contact => `
-        <div class="contact-item">
-            <div class="contact-info">
-                <h4>${contact.name}</h4>
-                <p>${contact.phone} | ${contact.relationship} | Priority: ${contact.priority}</p>
-            </div>
-            <div class="contact-actions">
-                <button class="btn btn-sm btn-primary" data-phone="${contact.phone}">
-                    <i class="fas fa-phone"></i>
-                </button>
-                <button class="btn btn-sm btn-danger" data-contact-id="${contact._id}">
-                    <i class="fas fa-trash"></i>
-                </button>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Modal utility functions
-function showModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) {
-        modal.classList.remove('hidden');
-        modal.style.display = 'flex';
-    }
-}
-
-function hideModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) {
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-    }
-}
-
-function showAddContactModal() {
-    showModal('contactModal');
-}
-
-function hideAddContactModal() {
-    hideModal('contactModal');
-}
-
-function closeContactModal() {
-    hideModal('contactModal');
-    document.getElementById('contactForm').reset();
-}
-
-async function handleAddContact(e) {
-    e.preventDefault();
-    
-    const form = e.target;
-    const data = {
-        name: form.contactName.value,
-        phone: form.contactPhone.value,
-        relationship: form.contactRelationship.value,
-        priority: parseInt(form.contactPriority.value)
-    };
-
-    try {
-        const response = await apiCall('/api/emergency/contacts', {
-            method: 'POST',
-            body: JSON.stringify(data)
-        });
-
-        if (response.success) {
-            showAlert('Emergency contact added successfully!', 'success');
-            closeContactModal();
-            loadEmergencyContacts();
-        }
-    } catch (error) {
-        showAlert(error.message || 'Failed to add contact', 'danger');
-    }
-}
-
-async function deleteContact(contactId) {
-    if (!confirm('Are you sure you want to delete this contact?')) {
-        return;
-    }
-
-    try {
-        const response = await apiCall(`/api/emergency/contacts/${contactId}`, {
-            method: 'DELETE'
-        });
-
-        if (response.success) {
-            showAlert('Contact deleted successfully', 'success');
-            loadEmergencyContacts();
-        }
-    } catch (error) {
-        showAlert(error.message || 'Failed to delete contact', 'danger');
-    }
-}
-
-// Initialize when page loads
-document.addEventListener('DOMContentLoaded', function() {
-    if (window.location.pathname === '/dashboard') {
-        initializeDashboard();
-        
-        // Add event listeners for buttons
-        const logoutBtn = document.getElementById('logout-btn');
-        if (logoutBtn) logoutBtn.addEventListener('click', logout);
-        
-        const sendOtpBtn = document.getElementById('send-otp-btn');
-        if (sendOtpBtn) sendOtpBtn.addEventListener('click', sendOTP);
-        
-        const verifyOtpBtn = document.getElementById('verify-otp-btn');
-        if (verifyOtpBtn) verifyOtpBtn.addEventListener('click', verifyOTP);
-        
-        const addContactBtn = document.getElementById('add-contact-btn');
-        if (addContactBtn) addContactBtn.addEventListener('click', showAddContactModal);
-        
-        const closeContactModal = document.getElementById('close-contact-modal');
-        if (closeContactModal) closeContactModal.addEventListener('click', hideAddContactModal);
-        
-        // Add event listeners for dynamically generated contact buttons
-        document.addEventListener('click', function(e) {
-            if (e.target.closest('[data-phone]')) {
-                const phone = e.target.closest('[data-phone]').getAttribute('data-phone');
-                callNumber(phone);
-            }
-            if (e.target.closest('[data-contact-id]')) {
-                const contactId = e.target.closest('[data-contact-id]').getAttribute('data-contact-id');
-                deleteContact(contactId);
-            }
-        });
-        
-        // Add event listeners for emergency numbers
-        const emergencyCards = document.querySelectorAll('.feature-card[data-number]');
-        emergencyCards.forEach(card => {
-            card.addEventListener('click', function() {
-                const number = this.getAttribute('data-number');
-                callNumber(number);
-            });
-        });
-        
-        // Add SOS button event listeners (CSP compliant)
-        const sosButton = document.getElementById('sosButton');
-        if (sosButton) {
-            console.log('SOS button found, attaching event listeners');
-            // Mouse events
-            sosButton.addEventListener('mousedown', startSOS);
-            sosButton.addEventListener('mouseup', cancelSOS);
-            sosButton.addEventListener('mouseleave', cancelSOS);
-            
-            // Touch events for mobile
-            sosButton.addEventListener('touchstart', startSOS);
-            sosButton.addEventListener('touchend', cancelSOS);
-            sosButton.addEventListener('touchcancel', cancelSOS);
-        } else {
-            console.error('SOS button not found in DOM');
-        }
-    }
-});

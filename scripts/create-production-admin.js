@@ -1,4 +1,4 @@
-// Script to add admin account to production Railway MongoDB database
+// Script to add admin account to production MongoDB database
 const mongoose = require('mongoose');
 require('dotenv').config();
 
@@ -7,7 +7,7 @@ const Admin = require('../models/Admin');
 
 async function addAdminToProductionDatabase() {
   try {
-    // Use MONGO_URI for production (Railway) or fallback to local
+    // Use MONGO_URI for production or fallback to local
     const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://localhost:27017/tourist-safety';
     
     console.log('🔄 Connecting to production database...');
@@ -30,7 +30,7 @@ async function addAdminToProductionDatabase() {
     console.log('📋 Credentials:');
     console.log('   Username: admin');
     console.log('   Password: admin123');
-    console.log('🌐 Ready for Render hosting!');
+    console.log('🌐 Production admin ready!');
     
     process.exit(0);
   } catch (error) {

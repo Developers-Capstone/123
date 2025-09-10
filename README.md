@@ -12,7 +12,7 @@ A comprehensive web application designed for hackathon demonstration that provid
 
 ### Document Upload & Verification
 - Upload government-issued documents (ID, passport, etc.)
-- **OCR text extraction** using Tesseract.js
+- **Manual verification** by admin team
 - Admin dashboard for document approval/rejection
 - Only verified users can access SOS features
 
@@ -134,7 +134,7 @@ npm start
 
 ### For Admins:
 1. **Login** with admin credentials
-2. **Review pending documents** with OCR text
+2. **Review pending documents** 
 3. **Approve/reject** documents with notes
 4. **Monitor SOS alerts** and update status
 5. **Manage users** and view statistics
@@ -152,7 +152,7 @@ npm start
 - `POST /api/phone/verify-otp` - Verify OTP
 
 ### Documents
-- `POST /api/documents/upload` - Upload document with OCR
+- `POST /api/documents/upload` - Upload document 
 - `GET /api/documents/my-documents` - Get user documents
 - `GET /api/documents/view/:id` - View document image
 
@@ -223,7 +223,7 @@ npm start
 
 ### Manual Testing Checklist
 - [ ] User registration with phone verification
-- [ ] Document upload with OCR processing
+- [ ] Document upload with 
 - [ ] Admin document verification workflow
 - [ ] SOS alert sending and SMS delivery
 - [ ] Map functionality with markers
@@ -241,14 +241,14 @@ npm start
 ### Key Demo Points
 1. **Show the problem**: Tourist safety concerns
 2. **Demonstrate solution**: Complete user journey
-3. **Highlight technology**: Twilio integration, OCR, real-time maps
+3. **Highlight technology**: Twilio integration, real-time maps
 4. **Emphasize security**: Verification process, rate limiting
 5. **Show scalability**: Admin panel, monitoring, statistics
 
 ### Demo Flow (5-7 minutes)
 1. **Landing page** overview (30 seconds)
 2. **User registration** and phone verification (1 minute)
-3. **Document upload** with OCR (1 minute)
+3. **Document upload** (1 minute)
 4. **Admin approval** process (1 minute)
 5. **Dashboard tour** with map and contacts (1.5 minutes)
 6. **SOS demonstration** (1 minute)

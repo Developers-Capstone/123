@@ -1,6 +1,5 @@
 const express = require('express');
 const multer = require('multer');
-const Tesseract = require('tesseract.js');
 const path = require('path');
 const fs = require('fs');
 const Document = require('../models/Document');
@@ -89,28 +88,14 @@ router.post('/upload', authenticateToken, (req, res, next) => {
       });
     }
 
-    // Perform OCR on the uploaded image
-    let extractedText = '';
-    try {
-      console.log('Starting OCR for file:', req.file.path);
-      const { data: { text } } = await Tesseract.recognize(req.file.path, 'eng', {
-        logger: m => console.log(m)
-      });
-      extractedText = text;
-      console.log('OCR completed successfully');
-    } catch (ocrError) {
-      console.error('OCR error:', ocrError);
-      extractedText = 'OCR processing failed';
-    }
-
-    // Create document record
+    // Create document record without OCR processing
     const document = new Document({
       userId: req.user.id,
       documentType,
       documentNumber,
       fileName: req.file.originalname,
       filePath: req.file.path,
-      extractedText
+      extractedText: 'Document uploaded - manual verification required'
     });
 
     await document.save();
